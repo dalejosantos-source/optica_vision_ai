@@ -24,7 +24,7 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: 4. Crear proyecto limpio y renombrar archivos con "- copia"
+      - name: 4. Crear proyecto y configurar Kotlin compatible
         run: |
           flutter create --org com.opticavision --project-name optica_vision_ai /tmp/app_build
           mkdir -p /tmp/app_build/assets
@@ -34,9 +34,12 @@ jobs:
           cp "AndroidManifest.xml"* /tmp/app_build/android/app/src/main/AndroidManifest.xml
           cp "modelo_gafas"* /tmp/app_build/assets/modelo_gafas.tflite
           cp "labels"* /tmp/app_build/assets/labels.txt
-          
-          echo "=== Verificando que los 5 archivos quedaron listos ==="
-          ls -la /tmp/app_build/assets/
+
+          # Parche para actualizar Kotlin en android/settings.gradle
+          cd /tmp/app_build/android
+          echo "Actualizando version de Kotlin en settings.gradle..."
+          sed -i 's/version "1.8.22" apply false/version "1.9.22" apply false/g' settings.gradle
+          sed -i 's/version "1.7.10" apply false/version "1.9.22" apply false/g' settings.gradle
 
       - name: 5. Descargar librerias y construir APK
         working-directory: /tmp/app_build
