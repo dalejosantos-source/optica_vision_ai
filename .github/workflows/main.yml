@@ -1,0 +1,48 @@
+name: Compilar APK Optica Vision
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. Descargar archivos del repositorio
+        uses: actions/checkout@v4
+
+      - name: 2. Configurar Java 17 para Android
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: 3. Instalar Flutter en la nube
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+
+      - name: 4. Crear proyecto Android y ubicar tus 5 archivos
+        run: |
+          mkdir -p /tmp/backup
+          cp pubspec.yaml main.dart AndroidManifest.xml modelo_gafas.tflite labels.txt /tmp/backup/
+          flutter create --org com.opticavision --project-name optica_vision_ai .
+          mkdir -p assets
+          cp /tmp/backup/pubspec.yaml ./pubspec.yaml
+          cp /tmp/backup/main.dart ./lib/main.dart
+          cp /tmp/backup/AndroidManifest.xml ./android/app/src/main/AndroidManifest.xml
+          cp /tmp/backup/modelo_gafas.tflite ./assets/modelo_gafas.tflite
+          cp /tmp/backup/labels.txt ./assets/labels.txt
+
+      - name: 5. Descargar librerias y construir APK
+        run: |
+          flutter pub get
+          flutter build apk --split-per-abi
+
+      - name: 6. Publicar APK para descarga
+        uses: actions/upload-artifact@v4
+        with:
+          name: Instalador-Optica-Vision-AI
+          path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
