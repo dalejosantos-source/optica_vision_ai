@@ -5,234 +5,258 @@ import 'package:camera/camera.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img;
 
-List<CameraDescription> _cameras = [];
+List<CameraDescription> _availableCameras = [];
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+    ),
+  );
   try {
-    _cameras = await availableCameras();
+    _availableCameras = await availableCameras();
   } catch (e) {
-    debugPrint('Error detectando cámaras: $e');
+    debugPrint('Error detectando cámaras en ALJOLENS: $e');
   }
-  runApp(const OpticaVisionApp());
+  runApp(const AljolensApp());
 }
 
-class OpticaVisionApp extends StatelessWidget {
-  const OpticaVisionApp({super.key});
+class AljolensApp extends StatelessWidget {
+  const AljolensApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Óptica Vision AI',
+      title: 'ALJOLENS',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        brightness: Brightness.dark,
-        colorSchemeSeed: const Color(0xFF00B4D8),
-        scaffoldBackgroundColor: const Color(0xFF0D131A),
+        scaffoldBackgroundColor: const Color(0xFFF7EFE2),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFFE86A33),
+          primary: const Color(0xFFE86A33),
+          secondary: const Color(0xFFF1A661),
+          surface: const Color(0xFFFFFDF9),
+        ),
       ),
-      home: const EyewearClassifierScreen(),
+      home: const AljolensStudioScreen(),
     );
   }
 }
 
-class OpticalRecommendation {
-  final String categoryTitle;
-  final String summary;
-  final List<String> idealFaceShapes;
-  final String frameStyle;
-  final List<CatalogItem> catalogSuggestions;
-
-  const OpticalRecommendation({
-    required this.categoryTitle,
-    required this.summary,
-    required this.idealFaceShapes,
-    required this.frameStyle,
-    required this.catalogSuggestions,
-  });
+enum ScanUiState {
+  initialScanning,
+  rejectedFrame,
+  discoverySuccess,
 }
 
-class CatalogItem {
-  final String modelName;
-  final String material;
-  final String lensSpec;
-  final String priceRef;
-
-  const CatalogItem({
-    required this.modelName,
-    required this.material,
-    required this.lensSpec,
-    required this.priceRef,
-  });
-}
-
-class ClassificationPrediction {
+class PredictionItem {
   final String label;
   final double confidence;
 
-  const ClassificationPrediction({
+  const PredictionItem({
     required this.label,
     required this.confidence,
   });
 }
 
-class EyewearClassifierScreen extends StatefulWidget {
-  const EyewearClassifierScreen({super.key});
+class CatalogPiece {
+  final String name;
+  final String materialAndLens;
+  final String code;
 
-  @override
-  State<EyewearClassifierScreen> createState() =>
-      _EyewearClassifierScreenState();
+  const CatalogPiece({
+    required this.name,
+    required this.materialAndLens,
+    required this.code,
+  });
 }
 
-class _EyewearClassifierScreenState extends State<EyewearClassifierScreen>
+class EyewearBentoProfile {
+  final String displayTitle;
+  final String editorialBadge;
+  final String opticalAnalysis;
+  final List<String> idealFaceShapes;
+  final String structuralSpec;
+  final Color cardAccent;
+  final List<CatalogPiece> pieces;
+
+  const EyewearBentoProfile({
+    required this.displayTitle,
+    required this.editorialBadge,
+    required this.opticalAnalysis,
+    required this.idealFaceShapes,
+    required this.structuralSpec,
+    required this.cardAccent,
+    required this.pieces,
+  });
+}
+
+class AljolensStudioScreen extends StatefulWidget {
+  const AljolensStudioScreen({super.key});
+
+  @override
+  State<AljolensStudioScreen> createState() => _AljolensStudioScreenState();
+}
+
+class _AljolensStudioScreenState extends State<AljolensStudioScreen>
     with WidgetsBindingObserver {
+  static const double _minConfidenceThreshold = 0.60;
+  static const double _minDeltaMargin = 0.15;
+
   CameraController? _cameraController;
   Interpreter? _interpreter;
+
   List<String> _labels = [
     'Gafas redondas',
     'Gafas cuadradas',
     'Gafas aviador',
     'Gafas deportivas',
     'Gafas de sol',
+    'Sin gafas / Fondo',
   ];
 
-  bool _isCameraInitialized = false;
-  bool _isModelLoaded = false;
+  bool _isCameraReady = false;
+  bool _isModelReady = false;
   bool _isProcessing = false;
-  String? _statusMessage;
   String? _capturedImagePath;
-  List<ClassificationPrediction> _predictions = [];
+  String _rejectionReason = '';
+  ScanUiState _uiState = ScanUiState.initialScanning;
+  List<PredictionItem> _predictions = [];
 
-  final Map<String, OpticalRecommendation> _opticalDatabase = const {
-    'Gafas redondas': OpticalRecommendation(
-      categoryTitle: 'Gafas Redondas (Estilo Vintage / Intelectual)',
-      summary:
-          'Los aros curvos suavizan las facciones angulares y aportan equilibrio visual en la zona de los pómulos y la mandíbula.',
+  final Map<String, EyewearBentoProfile> _atelierProfiles = const {
+    'Gafas redondas': EyewearBentoProfile(
+      displayTitle: 'Gafas Redondas',
+      editorialBadge: 'COLECCIÓN INTELECTUAL & VINTAGE',
+      opticalAnalysis:
+          'Los aros orbitales curvos suavizan facciones angulares marcadas, equilibrando pómulos prominentes y líneas mandibulares rectas.',
       idealFaceShapes: [
         'Rostro Cuadrado',
         'Rostro Rectangular',
         'Rostro Diamante',
-        'Rostro Ovalado'
+        'Rostro Ovalado',
       ],
-      frameStyle:
-          'Montura circular de aro fino en titanio o pasta de acetato delgada con puente tipo llave.',
-      catalogSuggestions: [
-        CatalogItem(
-          modelName: 'Havana Round Classic 48',
-          material: 'Acetato Mazzucchelli Caret',
-          lensSpec: 'Antirreflejo + Filtro Luz Azul',
-          priceRef: 'Catálogo Ref. #RD-104',
+      structuralSpec:
+          'Aro circular continuo en titanio japonés ligero o pasta de acetato con puente tipo llave.',
+      cardAccent: Color(0xFFE86A33),
+      pieces: [
+        CatalogPiece(
+          name: 'ALJOLENS Orb-48 Titanium',
+          materialAndLens: 'Titanio Beta 10g • Antirreflejo + Filtro Azul',
+          code: 'ATELIER #RD-104',
         ),
-        CatalogItem(
-          modelName: 'Minimalist Titanium Orb',
-          material: 'Titanio ultraligero (11g)',
-          lensSpec: 'Policarbonato Asférico 1.67',
-          priceRef: 'Catálogo Ref. #RD-209',
+        CatalogPiece(
+          name: 'Havana Panto Classic',
+          materialAndLens: 'Acetato Mazzucchelli Caret • Lente Asférico 1.67',
+          code: 'ATELIER #RD-209',
         ),
       ],
     ),
-    'Gafas cuadradas': OpticalRecommendation(
-      categoryTitle: 'Gafas Cuadradas (Estructura y Definición)',
-      summary:
-          'Las líneas rectas y ángulos marcados agregan estructura geométrica, estilizando rostros de contornos suaves o circulares.',
+    'Gafas cuadradas': EyewearBentoProfile(
+      displayTitle: 'Gafas Cuadradas',
+      editorialBadge: 'ARQUITECTURA & DEFINICIÓN LINEAL',
+      opticalAnalysis:
+          'Sus ángulos definidos aportan estructura geométrica y carácter, estilizando contornos faciales suaves o circulares.',
       idealFaceShapes: [
         'Rostro Redondo',
         'Rostro Ovalado',
-        'Rostro Triángulo Invertido'
+        'Triángulo Invertido',
       ],
-      frameStyle:
-          'Marco geométrico de frente recto en acetato de alta densidad o combinación metal-acetato (Clubmaster/Wayfarer).',
-      catalogSuggestions: [
-        CatalogItem(
-          modelName: 'Urban Executive Square 54',
-          material: 'Acetato Negro Mate con bisagra flex',
-          lensSpec: 'Monofocal Digital HD Antirreflejo',
-          priceRef: 'Catálogo Ref. #SQ-310',
+      structuralSpec:
+          'Marco de frente recto en acetato de alta densidad con bisagra flexible de 5 barriles.',
+      cardAccent: Color(0xFFF1A661),
+      pieces: [
+        CatalogPiece(
+          name: 'ALJOLENS Block-54 Matte',
+          materialAndLens: 'Acetato Negro Mate • Monofocal Digital HD',
+          code: 'ATELIER #SQ-310',
         ),
-        CatalogItem(
-          modelName: 'Architect Half-Rim',
-          material: 'Acero inoxidable + Terminales TR90',
-          lensSpec: 'Fotocromático Transitions Gen 8',
-          priceRef: 'Catálogo Ref. #SQ-412',
+        CatalogPiece(
+          name: 'Architect Half-Rim',
+          materialAndLens: 'Acero Quirúrgico + TR90 • Fotocromático Gen 8',
+          code: 'ATELIER #SQ-412',
         ),
       ],
     ),
-    'Gafas aviador': OpticalRecommendation(
-      categoryTitle: 'Gafas Aviador (Doble Puente / Gota)',
-      summary:
-          'Su icónica silueta en forma de lágrima y doble puente nasal ensancha visualmente la mitad superior del rostro y estiliza el mentón.',
+    'Gafas aviador': EyewearBentoProfile(
+      displayTitle: 'Gafas Aviador',
+      editorialBadge: 'ICÓNICO DOBLE PUENTE & GOTA',
+      opticalAnalysis:
+          'La silueta en forma de lágrima con doble barra nasal ensancha visualmente el tercio superior del rostro y equilibra el mentón.',
       idealFaceShapes: [
         'Rostro Corazón',
-        'Rostro Ovalado',
-        'Rostro Cuadrado'
-      ],
-      frameStyle:
-          'Armazón metálico delgado con doble puente superior y plaquetas de silicona ajustables para ergonomía nasal.',
-      catalogSuggestions: [
-        CatalogItem(
-          modelName: 'AeroPilot Gold Optical',
-          material: 'Aleación Monel Dorada / Plata',
-          lensSpec: 'Lente Oftálmico Antirreflejo Esmeralda',
-          priceRef: 'Catálogo Ref. #AV-501',
-        ),
-        CatalogItem(
-          modelName: 'Navigator Carbon Edition',
-          material: 'Fibra de carbono y acero quirúrgico',
-          lensSpec: 'Lente Progresivo Digital FreeForm',
-          priceRef: 'Catálogo Ref. #AV-588',
-        ),
-      ],
-    ),
-    'Gafas deportivas': OpticalRecommendation(
-      categoryTitle: 'Gafas Deportivas (Envolventes / Alto Rendimiento)',
-      summary:
-          'Diseño aerodinámico de curvatura base 8 que ofrece cobertura periférica total, sujeción antideslizante y resistencia a impactos.',
-      idealFaceShapes: [
-        'Adaptable a todo tipo de rostro',
-        'Ajuste ergonómico craneal de 3 puntos'
-      ],
-      frameStyle:
-          'Montura envolvente en polímero con memoria TR90 y terminales engomados hidrofílicos.',
-      catalogSuggestions: [
-        CatalogItem(
-          modelName: 'Veloce Pro Cycling Shield',
-          material: 'Grilamid TR90 Ultraflexible',
-          lensSpec: 'Policarbonato Fotocromático + Ventilas Antiempañante',
-          priceRef: 'Catálogo Ref. #SP-702',
-        ),
-        CatalogItem(
-          modelName: 'TrailRunner Impact RX',
-          material: 'Polímero balístico con clip óptico interno',
-          lensSpec: 'Espejado Revo UV400 Alto Contraste',
-          priceRef: 'Catálogo Ref. #SP-745',
-        ),
-      ],
-    ),
-    'Gafas de sol': OpticalRecommendation(
-      categoryTitle: 'Gafas de Sol (Protección UV400 y Confort Visual)',
-      summary:
-          'Equipadas con lentes tintados o polarizados que bloquean el 100% de la radiación UVA/UVB y eliminan el deslumbramiento horizontal.',
-      idealFaceShapes: [
-        'Rostro Ovalado',
-        'Rostro Redondo',
         'Rostro Cuadrado',
-        'Rostro Corazón'
+        'Rostro Ovalado',
       ],
-      frameStyle:
-          'Monturas de calibre amplio (52mm - 58mm) en acetato pulido o metal con filtros solares categoría 3.',
-      catalogSuggestions: [
-        CatalogItem(
-          modelName: 'Solaris Polarized Classic',
-          material: 'Acetato Tortoise con alma metálica',
-          lensSpec: 'Polarizado Categoría 3 + Filtro UV400',
-          priceRef: 'Catálogo Ref. #SN-901',
+      structuralSpec:
+          'Armazón metálico delgado anticorrosivo con plaquetas nasales ergonómicas de silicona.',
+      cardAccent: Color(0xFF2A9D8F),
+      pieces: [
+        CatalogPiece(
+          name: 'ALJOLENS AeroPilot Gold',
+          materialAndLens: 'Aleación Monel Dorada • Antirreflejo Esmeralda',
+          code: 'ATELIER #AV-501',
         ),
-        CatalogItem(
-          modelName: 'Riviera Gradient Sun',
-          material: 'Bio-Acetato + Herrajes dorados',
-          lensSpec: 'Degradado Gris/Ámbar con Antirreflejo Interno',
-          priceRef: 'Catálogo Ref. #SN-934',
+        CatalogPiece(
+          name: 'Navigator Carbon Edition',
+          materialAndLens: 'Fibra de Carbono • Progresivo FreeForm HD',
+          code: 'ATELIER #AV-588',
+        ),
+      ],
+    ),
+    'Gafas deportivas': EyewearBentoProfile(
+      displayTitle: 'Gafas Deportivas',
+      editorialBadge: 'AERODINÁMICA & ALTO RENDIMIENTO',
+      opticalAnalysis:
+          'Diseño envolvente de curvatura base 8 que ofrece cobertura periférica total, agarre antideslizante y protección contra impactos.',
+      idealFaceShapes: [
+        'Ajuste Craneal Universal',
+        'Rostro Ovalado',
+        'Rostro Atlético',
+      ],
+      structuralSpec:
+          'Polímero con memoria Grilamid TR90 y terminales hidrofílicos de sujeción en 3 puntos.',
+      cardAccent: Color(0xFF3D5A80),
+      pieces: [
+        CatalogPiece(
+          name: 'ALJOLENS Veloce Shield Pro',
+          materialAndLens: 'TR90 Ultraflex • Policarbonato Ventilado UV400',
+          code: 'ATELIER #SP-702',
+        ),
+        CatalogPiece(
+          name: 'TrailRunner Impact RX',
+          materialAndLens: 'Polímero Balístico + Clip Óptico • Espejado Revo',
+          code: 'ATELIER #SP-745',
+        ),
+      ],
+    ),
+    'Gafas de sol': EyewearBentoProfile(
+      displayTitle: 'Gafas de Sol',
+      editorialBadge: 'PROTECCIÓN SOLAR UV400 & POLARIZADO',
+      opticalAnalysis:
+          'Lentes con filtro solar categoría 3 que bloquean el 100% de la radiación UVA/UVB y eliminan el deslumbramiento horizontal.',
+      idealFaceShapes: [
+        'Rostro Ovalado',
+        'Rostro Cuadrado',
+        'Rostro Redondo',
+        'Rostro Corazón',
+      ],
+      structuralSpec:
+          'Montura de calibre amplio (54-58mm) en bio-acetato pulido con alma metálica reforzada.',
+      cardAccent: Color(0xFFD9534F),
+      pieces: [
+        CatalogPiece(
+          name: 'ALJOLENS Riviera Polarized',
+          materialAndLens: 'Acetato Tortoise • Polarizado Categoría 3 UV400',
+          code: 'ATELIER #SN-901',
+        ),
+        CatalogPiece(
+          name: 'Solaris Amber Gradient',
+          materialAndLens: 'Bio-Acetato + Herraje Dorado • Degradado Ámbar',
+          code: 'ATELIER #SN-934',
         ),
       ],
     ),
@@ -242,7 +266,7 @@ class _EyewearClassifierScreenState extends State<EyewearClassifierScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _initializeSystem();
+    _initializeAll();
   }
 
   @override
@@ -255,25 +279,24 @@ class _EyewearClassifierScreenState extends State<EyewearClassifierScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final CameraController? cameraController = _cameraController;
-    if (cameraController == null || !cameraController.value.isInitialized) {
-      return;
-    }
+    final CameraController? controller = _cameraController;
+    if (controller == null || !controller.value.isInitialized) return;
+
     if (state == AppLifecycleState.inactive) {
-      cameraController.dispose();
+      controller.dispose();
     } else if (state == AppLifecycleState.resumed) {
-      _initCamera();
+      _setupCamera();
     }
   }
 
-  Future<void> _initializeSystem() async {
+  Future<void> _initializeAll() async {
     await Future.wait([
-      _loadModelAndLabels(),
-      _initCamera(),
+      _loadTfliteAssets(),
+      _setupCamera(),
     ]);
   }
 
-  Future<void> _loadModelAndLabels() async {
+  Future<void> _loadTfliteAssets() async {
     try {
       final options = InterpreterOptions()..threads = 4;
       _interpreter = await Interpreter.fromAsset(
@@ -282,123 +305,145 @@ class _EyewearClassifierScreenState extends State<EyewearClassifierScreen>
       );
 
       final rawLabels = await rootBundle.loadString('assets/labels.txt');
-      final parsedLabels = rawLabels
+      final cleanLabels = rawLabels
           .split('\n')
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
           .toList();
 
-      if (parsedLabels.length == 5) {
-        _labels = parsedLabels;
+      if (cleanLabels.isNotEmpty) {
+        _labels = cleanLabels;
       }
 
       if (mounted) {
-        setState(() {
-          _isModelLoaded = true;
-        });
+        setState(() => _isModelReady = true);
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _statusMessage =
-              'Error cargando modelo o etiquetas en assets/: $e';
-        });
-      }
+      debugPrint('Error cargando TFLite en ALJOLENS: $e');
     }
   }
 
-  Future<void> _initCamera() async {
-    if (_cameras.isEmpty) {
-      setState(() {
-        _statusMessage = 'No se detectó ninguna cámara en el dispositivo.';
-      });
-      return;
-    }
-
-    final CameraDescription selectedCamera = _cameras.firstWhere(
-      (camera) => camera.lensDirection == CameraLensDirection.back,
-      orElse: () => _cameras.first,
-    );
-
-    final controller = CameraController(
-      selectedCamera,
-      ResolutionPreset.high,
-      enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.jpeg,
-    );
-
-    _cameraController = controller;
-
+  Future<void> _setupCamera() async {
     try {
+      if (_availableCameras.isEmpty) {
+        _availableCameras = await availableCameras();
+      }
+      if (_availableCameras.isEmpty) return;
+
+      final selected = _availableCameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => _availableCameras.first,
+      );
+
+      final controller = CameraController(
+        selected,
+        ResolutionPreset.high,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+
+      _cameraController = controller;
       await controller.initialize();
       await controller.setFlashMode(FlashMode.off);
+
       if (mounted) {
-        setState(() {
-          _isCameraInitialized = true;
-        });
+        setState(() => _isCameraReady = true);
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _statusMessage = 'Permiso de cámara pendiente o error: $e';
-        });
-      }
+      debugPrint('Error cámara: $e');
     }
   }
 
-  Future<void> _captureAndClassify() async {
+  /// Detector auxiliar de textura uniforme o piel en primer plano (manos/fondos lisos)
+  bool _isLikelyHandOrBlankSurface(img.Image resized224) {
+    int skinTonePixels = 0;
+    int lowContrastPixels = 0;
+    const int totalPixels = 224 * 224;
+
+    double sumLuminance = 0.0;
+    final List<double> luminances = [];
+
+    for (int y = 0; y < 224; y++) {
+      for (int x = 0; x < 224; x++) {
+        final p = resized224.getPixel(x, y);
+        final int r = p.r.toInt();
+        final int g = p.g.toInt();
+        final int b = p.b.toInt();
+
+        // Regla cromática RGB para detección de epidermis en primer plano
+        final bool isSkin = r > 95 &&
+            g > 40 &&
+            b > 20 &&
+            (r - g).abs() > 12 &&
+            r > g &&
+            r > b;
+        if (isSkin) skinTonePixels++;
+
+        final double lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        sumLuminance += lum;
+        luminances.add(lum);
+      }
+    }
+
+    final double meanLum = sumLuminance / totalPixels;
+    for (final l in luminances) {
+      if ((l - meanLum).abs() < 18.0) {
+        lowContrastPixels++;
+      }
+    }
+
+    final double skinRatio = skinTonePixels / totalPixels;
+    final double flatRatio = lowContrastPixels / totalPixels;
+
+    // Si más del 62% del recuadro es piel continua (una mano) o >85% es pared lisa sin bordes
+    return skinRatio > 0.62 || flatRatio > 0.85;
+  }
+
+  Future<void> _scanAndEvaluateFrame() async {
     if (_cameraController == null ||
         !_cameraController!.value.isInitialized ||
-        _isProcessing) {
+        _isProcessing ||
+        !_isModelReady ||
+        _interpreter == null) {
       return;
     }
 
-    if (!_isModelLoaded || _interpreter == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('El modelo TFLite aún no está cargado.'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-
-    setState(() {
-      _isProcessing = true;
-      _statusMessage = null;
-    });
+    setState(() => _isProcessing = true);
 
     try {
-      final XFile photo = await _cameraController!.takePicture();
-      final Uint8List imageBytes = await File(photo.path).readAsBytes();
-      final img.Image? decodedImage = img.decodeImage(imageBytes);
+      final XFile picture = await _cameraController!.takePicture();
+      final Uint8List bytes = await File(picture.path).readAsBytes();
+      final img.Image? decoded = img.decodeImage(bytes);
 
-      if (decodedImage == null) {
-        throw Exception('No se pudo decodificar la fotografía.');
+      if (decoded == null) {
+        throw Exception('No fue posible decodificar la imagen capturada.');
       }
 
-      final img.Image orientedImage = img.bakeOrientation(decodedImage);
-      final int cropSize = orientedImage.width < orientedImage.height
-          ? orientedImage.width
-          : orientedImage.height;
-      final int offsetX = (orientedImage.width - cropSize) ~/ 2;
-      final int offsetY = (orientedImage.height - cropSize) ~/ 2;
+      final img.Image oriented = img.bakeOrientation(decoded);
+      final int side = oriented.width < oriented.height
+          ? oriented.width
+          : oriented.height;
+      final int offsetX = (oriented.width - side) ~/ 2;
+      final int offsetY = (oriented.height - side) ~/ 2;
 
-      final img.Image croppedImage = img.copyCrop(
-        orientedImage,
+      final img.Image squareCrop = img.copyCrop(
+        oriented,
         x: offsetX,
         y: offsetY,
-        width: cropSize,
-        height: cropSize,
+        width: side,
+        height: side,
       );
 
-      final img.Image resizedImage = img.copyResize(
-        croppedImage,
+      final img.Image resized = img.copyResize(
+        squareCrop,
         width: 224,
         height: 224,
         interpolation: img.Interpolation.linear,
       );
 
+      final bool isHandOrBlank = _isLikelyHandOrBlankSurface(resized);
+
+      // Tensor de entrada [1, 224, 224, 3] normalizado en [0.0, 1.0]
       final inputTensor = List.generate(
         1,
         (_) => List.generate(
@@ -406,7 +451,7 @@ class _EyewearClassifierScreenState extends State<EyewearClassifierScreen>
           (y) => List.generate(
             224,
             (x) {
-              final pixel = resizedImage.getPixel(x, y);
+              final pixel = resized.getPixel(x, y);
               return <double>[
                 pixel.r / 255.0,
                 pixel.g / 255.0,
@@ -417,28 +462,72 @@ class _EyewearClassifierScreenState extends State<EyewearClassifierScreen>
         ),
       );
 
-      final outputTensor = List.generate(1, (_) => List<double>.filled(5, 0.0));
+      // Determinar dinámicamente cuántas clases tiene el modelo TFLite cargado (5 o 6)
+      final outputShape = _interpreter!.getOutputTensor(0).shape;
+      final int numModelClasses = outputShape.last;
+      final outputTensor = List.generate(
+        1,
+        (_) => List<double>.filled(numModelClasses, 0.0),
+      );
 
       _interpreter!.run(inputTensor, outputTensor);
 
-      final List<double> probabilities = List<double>.from(outputTensor[0]);
-      final List<ClassificationPrediction> results = [];
+      final List<double> probs = List<double>.from(outputTensor[0]);
+      final List<PredictionItem> parsedResults = [];
 
-      for (int i = 0; i < probabilities.length && i < _labels.length; i++) {
-        results.add(
-          ClassificationPrediction(
-            label: _labels[i],
-            confidence: probabilities[i],
-          ),
+      for (int i = 0; i < probs.length; i++) {
+        final String labelName =
+            i < _labels.length ? _labels[i] : 'Clase #$i';
+        parsedResults.add(
+          PredictionItem(label: labelName, confidence: probs[i]),
         );
       }
 
-      results.sort((a, b) => b.confidence.compareTo(a.confidence));
+      parsedResults.sort((a, b) => b.confidence.compareTo(a.confidence));
+
+      // Evaluación del Filtro Dual de Rechazo (Open-Set Guard)
+      final PredictionItem top1 = parsedResults.first;
+      final PredictionItem top2 = parsedResults.length > 1
+          ? parsedResults[1]
+          : const PredictionItem(label: '', confidence: 0.0);
+
+      final double delta = top1.confidence - top2.confidence;
+      final bool isNegativeClass =
+          top1.label.toLowerCase().contains('sin_gafas') ||
+              top1.label.toLowerCase().contains('sin gafas') ||
+              top1.label.toLowerCase().contains('fondo');
+
+      ScanUiState nextState = ScanUiState.discoverySuccess;
+      String reason = '';
+
+      if (isNegativeClass) {
+        nextState = ScanUiState.rejectedFrame;
+        reason =
+            'El sensor detectó un fondo, mano u objeto distinto a una montura óptica.';
+      } else if (isHandOrBlank && top1.confidence < 0.82) {
+        nextState = ScanUiState.rejectedFrame;
+        reason =
+            'Se detectó una mano o superficie uniforme obstruyendo el encuadre. Apoya las gafas sobre una mesa despejada.';
+      } else if (top1.confidence < _minConfidenceThreshold) {
+        nextState = ScanUiState.rejectedFrame;
+        reason =
+            'Nivel de confianza insuficiente (${(top1.confidence * 100).toStringAsFixed(1)}% < 60%). Acerca la montura de frente y evita cubrir el puente con los dedos.';
+      } else if (delta < _minDeltaMargin) {
+        nextState = ScanUiState.rejectedFrame;
+        reason =
+            'Ambigüedad morfológica entre ${top1.label} y ${top2.label} (margen Δ de ${(delta * 100).toStringAsFixed(1)}% < 15%). Mejora la iluminación frontal.';
+      }
 
       if (mounted) {
         setState(() {
-          _capturedImagePath = photo.path;
-          _predictions = results;
+          _capturedImagePath = picture.path;
+          _predictions = parsedResults
+              .where((p) =>
+                  !p.label.toLowerCase().contains('sin_gafas') &&
+                  !p.label.toLowerCase().contains('sin gafas'))
+              .toList();
+          _rejectionReason = reason;
+          _uiState = nextState;
           _isProcessing = false;
         });
       }
@@ -446,548 +535,867 @@ class _EyewearClassifierScreenState extends State<EyewearClassifierScreen>
       if (mounted) {
         setState(() {
           _isProcessing = false;
-          _statusMessage = 'Error procesando la imagen: $e';
+          _uiState = ScanUiState.rejectedFrame;
+          _rejectionReason = 'No se pudo procesar la captura: $e';
         });
       }
     }
   }
 
-  void _resetScanner() {
+  void _resetToCamera() {
     setState(() {
       _capturedImagePath = null;
       _predictions = [];
-      _statusMessage = null;
+      _rejectionReason = '';
+      _uiState = ScanUiState.initialScanning;
     });
   }
 
-  OpticalRecommendation _getRecommendationForLabel(String rawLabel) {
-    final normalized = rawLabel.trim().toLowerCase();
-    for (final entry in _opticalDatabase.entries) {
-      if (entry.key.toLowerCase() == normalized) {
-        return entry.value;
-      }
+  EyewearBentoProfile _resolveProfile(String label) {
+    final clean = label.toLowerCase();
+    if (clean.contains('redonda')) {
+      return _atelierProfiles['Gafas redondas']!;
+    } else if (clean.contains('cuadrada')) {
+      return _atelierProfiles['Gafas cuadradas']!;
+    } else if (clean.contains('aviador')) {
+      return _atelierProfiles['Gafas aviador']!;
+    } else if (clean.contains('deportiva')) {
+      return _atelierProfiles['Gafas deportivas']!;
     }
-    if (normalized.contains('redonda')) {
-      return _opticalDatabase['Gafas redondas']!;
-    } else if (normalized.contains('cuadrada')) {
-      return _opticalDatabase['Gafas cuadradas']!;
-    } else if (normalized.contains('aviador')) {
-      return _opticalDatabase['Gafas aviador']!;
-    } else if (normalized.contains('deportiva')) {
-      return _opticalDatabase['Gafas deportivas']!;
-    }
-    return _opticalDatabase['Gafas de sol']!;
+    return _atelierProfiles['Gafas de sol']!;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopHeader(),
-            Expanded(
-              flex: _predictions.isEmpty ? 7 : 4,
-              child: _buildCameraOrPhotoViewport(),
-            ),
-            Expanded(
-              flex: _predictions.isEmpty ? 3 : 6,
-              child: _buildBottomPanel(),
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildEditorialTopBar(),
+              const SizedBox(height: 14),
+              Expanded(
+                flex: _uiState == ScanUiState.initialScanning ? 6 : 4,
+                child: _buildBentoCameraViewport(),
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                flex: _uiState == ScanUiState.initialScanning ? 3 : 6,
+                child: _buildDynamicStatePanel(),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildTopHeader() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFF121A24),
-        border: Border(
-          bottom: BorderSide(color: Color(0xFF1E2D3D), width: 1),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: const Color(0xFF00B4D8).withOpacity(0.15),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: const Icon(
-              Icons.visibility_outlined,
-              color: Color(0xFF00B4D8),
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Óptica Vision AI',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.3,
-                  ),
-                ),
-                Text(
-                  'Clasificador de Monturas & Catálogo Inteligente',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white70,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: _isModelLoaded
-                  ? Colors.green.withOpacity(0.2)
-                  : Colors.orange.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: _isModelLoaded ? Colors.greenAccent : Colors.orangeAccent,
-                width: 1,
-              ),
-            ),
-            child: Text(
-              _isModelLoaded ? 'TFLite Offline' : 'Cargando IA',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: _isModelLoaded ? Colors.greenAccent : Colors.orangeAccent,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCameraOrPhotoViewport() {
-    return Stack(
-      fit: StackFit.expand,
+  // ===========================================================================
+  // ENCABEZADO WARM EDITORIAL "ALJOLENS"
+  // ===========================================================================
+  Widget _buildEditorialTopBar() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        if (_capturedImagePath != null)
-          Image.file(
-            File(_capturedImagePath!),
-            fit: BoxFit.cover,
-          )
-        else if (_isCameraInitialized && _cameraController != null)
-          ClipRect(
-            child: OverflowBox(
-              alignment: Alignment.center,
-              child: FittedBox(
-                fit: BoxFit.cover,
-                child: SizedBox(
-                  width: _cameraController!.value.previewSize!.height,
-                  height: _cameraController!.value.previewSize!.width,
-                  child: CameraPreview(_cameraController!),
-                ),
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF264653),
+                borderRadius: BorderRadius.circular(20),
               ),
-            ),
-          )
-        else
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
+              child: const Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const CircularProgressIndicator(color: Color(0xFF00B4D8)),
-                  const SizedBox(height: 16),
+                  Icon(
+                    Icons.auto_awesome_rounded,
+                    color: Color(0xFFF1A661),
+                    size: 14,
+                  ),
+                  SizedBox(width: 6),
                   Text(
-                    _statusMessage ?? 'Inicializando visor de cámara...',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white70),
+                    'ALJOLENS.',
+                    style: TextStyle(
+                      color: Color(0xFFF7EFE2),
+                      fontWeight: FontWeight.w900,
+                      fontSize: 13,
+                      letterSpacing: 1.4,
+                    ),
                   ),
                 ],
               ),
             ),
-          ),
-        if (_capturedImagePath == null && _isCameraInitialized)
-          Center(
-            child: Container(
-              width: 250,
-              height: 150,
+            const SizedBox(width: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                border: Border.all(
-                  color: const Color(0xFF00B4D8).withOpacity(0.85),
-                  width: 2.2,
-                ),
-                borderRadius: BorderRadius.circular(18),
-                color: Colors.black.withOpacity(0.12),
+                color: const Color(0xFFEED7C5),
+                borderRadius: BorderRadius.circular(16),
               ),
-              child: const Align(
-                alignment: Alignment.bottomCenter,
-                child: Padding(
-                  padding: EdgeInsets.only(bottom: 8.0),
-                  child: Text(
-                    'Centra las gafas dentro del recuadro',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                      shadows: [Shadow(blurRadius: 4, color: Colors.black)],
-                    ),
-                  ),
+              child: Text(
+                _isModelReady ? 'AI STUDIO • OFFLINE' : 'CARGANDO MOTOR...',
+                style: const TextStyle(
+                  color: Color(0xFF264653),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.6,
                 ),
               ),
             ),
-          ),
-        if (_capturedImagePath != null)
-          Positioned(
-            top: 12,
-            right: 12,
-            child: ElevatedButton.icon(
-              onPressed: _resetScanner,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.black87,
-                foregroundColor: Colors.white,
-              ),
-              icon: const Icon(Icons.cameraswitch_outlined, size: 18),
-              label: const Text('Nueva captura'),
+          ],
+        ),
+        if (_uiState != ScanUiState.initialScanning)
+          IconButton.filledTonal(
+            onPressed: _resetToCamera,
+            style: IconButton.styleFrom(
+              backgroundColor: const Color(0xFFEED7C5),
+              foregroundColor: const Color(0xFF264653),
             ),
+            icon: const Icon(Icons.replay_rounded, size: 20),
+            tooltip: 'Nuevo escaneo',
           ),
       ],
     );
   }
 
-  Widget _buildBottomPanel() {
-    if (_statusMessage != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Text(
-            _statusMessage!,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.redAccent),
-          ),
-        ),
-      );
-    }
-
-    if (_predictions.isEmpty) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-        decoration: const BoxDecoration(
-          color: Color(0xFF121A24),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              'Enfoca la montura con buena iluminación frontal y presiona el botón para analizar su geometría.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Colors.white70),
-            ),
-            const SizedBox(height: 18),
-            SizedBox(
-              width: double.infinity,
-              height: 54,
-              child: FilledButton.icon(
-                onPressed: _isProcessing ? null : _captureAndClassify,
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF00B4D8),
-                  foregroundColor: Colors.black,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-                icon: _isProcessing
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          color: Colors.black,
-                        ),
-                      )
-                    : const Icon(Icons.camera_alt_rounded),
-                label: Text(
-                  _isProcessing
-                      ? 'Procesando Tensor 224x224...'
-                      : 'Capturar y Clasificar Montura',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final ClassificationPrediction topResult = _predictions.first;
-    final OpticalRecommendation recommendation =
-        _getRecommendationForLabel(topResult.label);
-
+  // ===========================================================================
+  // VISOR DE CÁMARA CON BORDES SUAVES (BORDER RADIUS 32) Y GUÍA ÓPTICA
+  // ===========================================================================
+  Widget _buildBentoCameraViewport() {
     return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF121A24),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: const Color(0xFF264653),
+        borderRadius: BorderRadius.circular(32),
+        border: Border.all(color: const Color(0xFFE6D5C3), width: 3),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x1F264653),
+            blurRadius: 24,
+            offset: Offset(0, 10),
+          ),
+        ],
       ),
-      child: ListView(
-        padding: const EdgeInsets.all(18),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
         children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF0077B6), Color(0xFF00B4D8)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+          if (_capturedImagePath != null)
+            Image.file(
+              File(_capturedImagePath!),
+              fit: BoxFit.cover,
+            )
+          else if (_isCameraReady && _cameraController != null)
+            ClipRect(
+              child: OverflowBox(
+                alignment: Alignment.center,
+                child: FittedBox(
+                  fit: BoxFit.cover,
+                  child: SizedBox(
+                    width: _cameraController!.value.previewSize!.height,
+                    height: _cameraController!.value.previewSize!.width,
+                    child: CameraPreview(_cameraController!),
+                  ),
+                ),
               ),
-              borderRadius: BorderRadius.circular(16),
+            )
+          else
+            const Center(
+              child: CircularProgressIndicator(color: Color(0xFFF1A661)),
             ),
-            child: Row(
-              children: [
-                const Icon(Icons.verified_rounded, color: Colors.white, size: 36),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'MONTURA DETECTADA',
+
+          // Retículo guía de encuadre durante el modo escaneo
+          if (_capturedImagePath == null && _isCameraReady)
+            Center(
+              child: Container(
+                width: 240,
+                height: 135,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(
+                    color: const Color(0xFFF7EFE2).withOpacity(0.9),
+                    width: 2.2,
+                  ),
+                  color: Colors.black.withOpacity(0.10),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF264653).withOpacity(0.85),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Text(
+                          'ENCUADRE ÓPTICO 224×224',
+                          style: TextStyle(
+                            color: Color(0xFFF1A661),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.8,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const Icon(
+                      Icons.remove_red_eye_outlined,
+                      color: Color(0x99FFFFFF),
+                      size: 28,
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8.0),
+                      child: Text(
+                        'Sin dedos sobre el puente nasal',
                         style: TextStyle(
+                          color: Colors.white,
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
-                          color: Colors.white70,
-                          letterSpacing: 1.1,
-                        ),
-                      ),
-                      Text(
-                        topResult.label,
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.28),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '${(topResult.confidence * 100).toStringAsFixed(1)}%',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'Distribución de Confianza (5 Categorías)',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 8),
-          ..._predictions.map((pred) {
-            final double pct = (pred.confidence * 100).clamp(0.0, 100.0);
-            final bool isTop = pred == topResult;
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        pred.label,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: isTop ? FontWeight.bold : FontWeight.normal,
-                          color: isTop ? const Color(0xFF90E0EF) : Colors.white70,
-                        ),
-                      ),
-                      Text(
-                        '${pct.toStringAsFixed(1)}%',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: isTop ? FontWeight.bold : FontWeight.normal,
-                          color: isTop ? const Color(0xFF90E0EF) : Colors.white70,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: LinearProgressIndicator(
-                      value: pred.confidence.clamp(0.0, 1.0),
-                      minHeight: 7,
-                      backgroundColor: const Color(0xFF1E2D3D),
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        isTop ? const Color(0xFF00B4D8) : Colors.blueGrey,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }),
-          const SizedBox(height: 18),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF192432),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFF283B52)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.auto_awesome_rounded,
-                      color: Color(0xFF90E0EF),
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        recommendation.categoryTitle,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF90E0EF),
                         ),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  recommendation.summary,
-                  style: const TextStyle(fontSize: 13, color: Colors.white70),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'Tipos de Rostro Recomendados:',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+              ),
+            ),
+
+          // Botón flotante para volver a capturar cuando hay foto fija
+          if (_capturedImagePath != null)
+            Positioned(
+              bottom: 12,
+              right: 12,
+              child: FilledButton.tonalIcon(
+                onPressed: _resetToCamera,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF264653).withOpacity(0.9),
+                  foregroundColor: const Color(0xFFF7EFE2),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
                   ),
                 ),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: recommendation.idealFaceShapes
-                      .map(
-                        (shape) => Chip(
-                          label: Text(
-                            shape,
-                            style: const TextStyle(fontSize: 11),
-                          ),
-                          backgroundColor: const Color(0xFF0D131A),
-                          side: const BorderSide(color: Color(0xFF00B4D8)),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                      )
-                      .toList(),
+                icon: const Icon(Icons.camera_alt_outlined, size: 16),
+                label: const Text(
+                  'Capturar otra',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  'Especificación de Montura: ${recommendation.frameStyle}',
-                  style: const TextStyle(fontSize: 12, color: Colors.white70),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // SELECTOR DE LOS 3 ESTADOS DE INTERFAZ
+  // ===========================================================================
+  Widget _buildDynamicStatePanel() {
+    switch (_uiState) {
+      case ScanUiState.initialScanning:
+        return _buildStateInitialScanning();
+      case ScanUiState.rejectedFrame:
+        return _buildStateRejectedFrame();
+      case ScanUiState.discoverySuccess:
+        return _buildStateDiscoveryAtelier();
+    }
+  }
+
+  // ESTADO A: ESCANEO INICIAL
+  Widget _buildStateInitialScanning() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFDF9),
+        borderRadius: BorderRadius.circular(32),
+        border: Border.all(color: const Color(0xFFEED7C5), width: 1.5),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14E86A33),
+            blurRadius: 20,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            children: [
+              const Text(
+                'DESCUBRIMIENTO DE MONTURA',
+                style: TextStyle(
+                  color: Color(0xFF264653),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.5,
                 ),
-                const SizedBox(height: 14),
-                const Text(
-                  'Sugerencias del Catálogo de Óptica:',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Coloca las gafas de frente sobre una superficie clara. Nuestro filtro descartará manos o tomas con menos del 60% de certeza.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: const Color(0xFF264653).withOpacity(0.75),
+                  fontSize: 12.5,
+                  height: 1.35,
                 ),
-                const SizedBox(height: 8),
-                ...recommendation.catalogSuggestions.map(
-                  (item) => Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF101720),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
+              ),
+            ],
+          ),
+          SizedBox(
+            width: double.infinity,
+            height: 58,
+            child: ElevatedButton(
+              onPressed: _isProcessing ? null : _scanAndEvaluateFrame,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE86A33),
+                foregroundColor: const Color(0xFFFFFDF9),
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(28),
+                ),
+              ),
+              child: _isProcessing
+                  ? const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(
-                          Icons.remove_red_eye_outlined,
-                          color: Color(0xFF00B4D8),
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: Colors.white,
+                          ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                item.modelName,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              Text(
-                                '${item.material} • ${item.lensSpec}',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.white70,
-                                ),
-                              ),
-                              Text(
-                                item.priceRef,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Color(0xFF90E0EF),
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
+                        SizedBox(width: 12),
+                        Text(
+                          'Analizando Geometría...',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
                       ],
+                    )
+                  : const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.center_focus_strong_rounded, size: 22),
+                        SizedBox(width: 10),
+                        Text(
+                          'Escanear en ALJOLENS',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ESTADO B: DESCARTE / RECHAZO ILUSTRADO (MANOS, FONDOS O BAJA CERTEZA)
+  Widget _buildStateRejectedFrame() {
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFBE6D4),
+        borderRadius: BorderRadius.circular(32),
+        border: Border.all(color: const Color(0xFFF1A661), width: 2),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Container(
+            width: 66,
+            height: 66,
+            decoration: const BoxDecoration(
+              color: Color(0xFF264653),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.back_hand_outlined,
+              color: Color(0xFFF1A661),
+              size: 32,
+            ),
+          ),
+          Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE86A33),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text(
+                  'FILTRO OPEN-SET ACTIVADO',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'No se detectaron gafas válidas',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Color(0xFF264653),
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _rejectionReason,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFF264653),
+                  fontSize: 12.5,
+                  height: 1.35,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFFDF9),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Row(
+              children: [
+                Icon(
+                  Icons.lightbulb_outline_rounded,
+                  color: Color(0xFFE86A33),
+                  size: 20,
+                ),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Tip ALJOLENS: Apoya las gafas sobre una mesa lisa y toma la foto desde arriba sin tapar el marco con la mano.',
+                    style: TextStyle(
+                      color: Color(0xFF264653),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
               ],
             ),
           ),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: FilledButton.icon(
+              onPressed: _resetToCamera,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF264653),
+                foregroundColor: const Color(0xFFF7EFE2),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+              ),
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text(
+                'Reintentar Captura',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+              ),
+            ),
+          ),
         ],
       ),
+    );
+  }
+
+  // ESTADO C: DESCUBRIMIENTO "ALJOLENS ATELIER" (CUADRÍCULA BENTO)
+  Widget _buildStateDiscoveryAtelier() {
+    final PredictionItem winner = _predictions.first;
+    final EyewearBentoProfile profile = _resolveProfile(winner.label);
+
+    return ListView(
+      physics: const BouncingScrollPhysics(),
+      children: [
+        // TARJETA HERO BENTO DE RESULTADO
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: profile.cardAccent,
+            borderRadius: BorderRadius.circular(32),
+            boxShadow: [
+              BoxShadow(
+                color: profile.cardAccent.withOpacity(0.32),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF264653).withOpacity(0.25),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Text(
+                      profile.editorialBadge,
+                      style: const TextStyle(
+                        color: Color(0xFFFFFDF9),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF264653),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${(winner.confidence * 100).toStringAsFixed(1)}% CERTEZA',
+                      style: const TextStyle(
+                        color: Color(0xFFF1A661),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                profile.displayTitle.toUpperCase(),
+                style: const TextStyle(
+                  color: Color(0xFFFFFDF9),
+                  fontSize: 25,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.4,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                profile.opticalAnalysis,
+                style: const TextStyle(
+                  color: Color(0xFFFFFDF9),
+                  fontSize: 12.5,
+                  height: 1.35,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // FILA BENTO DOBLE: ROSTROS IDEALES Y ESTRUCTURA DE MARCO
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFFDF9),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: const Color(0xFFEED7C5)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(
+                          Icons.face_retouching_natural_rounded,
+                          size: 18,
+                          color: Color(0xFFE86A33),
+                        ),
+                        SizedBox(width: 6),
+                        Text(
+                          'ROSTROS AFINES',
+                          style: TextStyle(
+                            color: Color(0xFF264653),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: profile.idealFaceShapes
+                          .map(
+                            (shape) => Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 9,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF7EFE2),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                shape,
+                                style: const TextStyle(
+                                  color: Color(0xFF264653),
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF264653),
+                  borderRadius: BorderRadius.circular(28),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(
+                          Icons.architecture_rounded,
+                          size: 18,
+                          color: Color(0xFFF1A661),
+                        ),
+                        SizedBox(width: 6),
+                        Text(
+                          'INGENIERÍA',
+                          style: TextStyle(
+                            color: Color(0xFFF1A661),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      profile.structuralSpec,
+                      style: const TextStyle(
+                        color: Color(0xFFF7EFE2),
+                        fontSize: 11.5,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        // TARJETA BENTO: CATÁLOGO DE AUTOR ALJOLENS ATELIER
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFFDF9),
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: const Color(0xFFEED7C5)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'SUGERENCIAS DEL CATÁLOGO ALJOLENS ATELIER',
+                style: TextStyle(
+                  color: Color(0xFF264653),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.6,
+                ),
+              ),
+              const SizedBox(height: 10),
+              ...profile.pieces.map(
+                (piece) => Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF7EFE2),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: profile.cardAccent.withOpacity(0.18),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.visibility_rounded,
+                          color: profile.cardAccent,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              piece.name,
+                              style: const TextStyle(
+                                color: Color(0xFF264653),
+                                fontWeight: FontWeight.w900,
+                                fontSize: 13.5,
+                              ),
+                            ),
+                            Text(
+                              piece.materialAndLens,
+                              style: TextStyle(
+                                color:
+                                    const Color(0xFF264653).withOpacity(0.75),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF264653),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          piece.code,
+                          style: const TextStyle(
+                            color: Color(0xFFF1A661),
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // DISTRIBUCIÓN DE CONFIANZA DE LAS CATEGORÍAS ÓPTICAS
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFFDF9),
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: const Color(0xFFEED7C5)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'DISTRIBUCIÓN TENSORIAL DE PROBABILIDADES',
+                style: TextStyle(
+                  color: Color(0xFF264653),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.6,
+                ),
+              ),
+              const SizedBox(height: 10),
+              ..._predictions.map((item) {
+                final bool isWinner = item == winner;
+                final double pct = (item.confidence * 100).clamp(0.0, 100.0);
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            item.label,
+                            style: TextStyle(
+                              color: const Color(0xFF264653),
+                              fontSize: 12,
+                              fontWeight:
+                                  isWinner ? FontWeight.w900 : FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            '${pct.toStringAsFixed(1)}%',
+                            style: TextStyle(
+                              color: isWinner
+                                  ? const Color(0xFFE86A33)
+                                  : const Color(0xFF264653),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: LinearProgressIndicator(
+                          value: item.confidence.clamp(0.0, 1.0),
+                          minHeight: 8,
+                          backgroundColor: const Color(0xFFF7EFE2),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            isWinner
+                                ? const Color(0xFFE86A33)
+                                : const Color(0xFFF1A661),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
