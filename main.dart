@@ -104,18 +104,22 @@ class AljolensStudioScreen extends StatefulWidget {
 
 class _AljolensStudioScreenState extends State<AljolensStudioScreen>
     with WidgetsBindingObserver {
-  static const double _minConfidenceThreshold = 0.60;
-  static const double _minDeltaMargin = 0.15;
+  static const double _minConfidenceThreshold = 0.52;
+  static const double _minDeltaMargin = 0.12;
 
   CameraController? _cameraController;
   Interpreter? _interpreter;
 
+  // Las 8 categorías de SnellenVision + 1 clase de rechazo
   List<String> _labels = [
-    'Gafas redondas',
-    'Gafas cuadradas',
-    'Gafas aviador',
-    'Gafas deportivas',
-    'Gafas de sol',
+    'Aviador',
+    'Browline',
+    'Cat eye',
+    'Geométrico',
+    'Ovalado',
+    'Rectangular',
+    'Circular',
+    'Cuadrado',
     'Sin gafas / Fondo',
   ];
 
@@ -127,136 +131,180 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
   ScanUiState _uiState = ScanUiState.initialScanning;
   List<PredictionItem> _predictions = [];
 
-  final Map<String, EyewearBentoProfile> _atelierProfiles = const {
-    'Gafas redondas': EyewearBentoProfile(
-      displayTitle: 'Gafas Redondas',
-      editorialBadge: 'COLECCIÓN INTELECTUAL & VINTAGE',
+  final Map<String, EyewearBentoProfile> _snellenCatalog = const {
+    'Aviador': EyewearBentoProfile(
+      displayTitle: 'Montura Aviador',
+      editorialBadge: 'SILUETA LÁGRIMA & PUENTE CLÁSICO',
       opticalAnalysis:
-          'Los aros orbitales curvos suavizan facciones angulares marcadas, equilibrando pómulos prominentes y líneas mandibulares rectas.',
-      idealFaceShapes: [
-        'Rostro Cuadrado',
-        'Rostro Rectangular',
-        'Rostro Diamante',
-        'Rostro Ovalado',
-      ],
+          'Aros con caída en gota suave que equilibran el tercio medio facial y estilizan pómulos y mentón.',
+      idealFaceShapes: ['Rostro Corazón', 'Rostro Cuadrado', 'Rostro Ovalado'],
       structuralSpec:
-          'Aro circular continuo en titanio japonés ligero o pasta de acetato con puente tipo llave.',
-      cardAccent: Color(0xFFE86A33),
-      pieces: [
-        CatalogPiece(
-          name: 'ALJOLENS Orb-48 Titanium',
-          materialAndLens: 'Titanio Beta 10g • Antirreflejo + Filtro Azul',
-          code: 'ATELIER #RD-104',
-        ),
-        CatalogPiece(
-          name: 'Havana Panto Classic',
-          materialAndLens: 'Acetato Mazzucchelli Caret • Lente Asférico 1.67',
-          code: 'ATELIER #RD-209',
-        ),
-      ],
-    ),
-    'Gafas cuadradas': EyewearBentoProfile(
-      displayTitle: 'Gafas Cuadradas',
-      editorialBadge: 'ARQUITECTURA & DEFINICIÓN LINEAL',
-      opticalAnalysis:
-          'Sus ángulos definidos aportan estructura geométrica y carácter, estilizando contornos faciales suaves o circulares.',
-      idealFaceShapes: [
-        'Rostro Redondo',
-        'Rostro Ovalado',
-        'Triángulo Invertido',
-      ],
-      structuralSpec:
-          'Marco de frente recto en acetato de alta densidad con bisagra flexible de 5 barriles.',
-      cardAccent: Color(0xFFF1A661),
-      pieces: [
-        CatalogPiece(
-          name: 'ALJOLENS Block-54 Matte',
-          materialAndLens: 'Acetato Negro Mate • Monofocal Digital HD',
-          code: 'ATELIER #SQ-310',
-        ),
-        CatalogPiece(
-          name: 'Architect Half-Rim',
-          materialAndLens: 'Acero Quirúrgico + TR90 • Fotocromático Gen 8',
-          code: 'ATELIER #SQ-412',
-        ),
-      ],
-    ),
-    'Gafas aviador': EyewearBentoProfile(
-      displayTitle: 'Gafas Aviador',
-      editorialBadge: 'ICÓNICO DOBLE PUENTE & GOTA',
-      opticalAnalysis:
-          'La silueta en forma de lágrima con doble barra nasal ensancha visualmente el tercio superior del rostro y equilibra el mentón.',
-      idealFaceShapes: [
-        'Rostro Corazón',
-        'Rostro Cuadrado',
-        'Rostro Ovalado',
-      ],
-      structuralSpec:
-          'Armazón metálico delgado anticorrosivo con plaquetas nasales ergonómicas de silicona.',
+          'Frente estilizado con puente superior definido y apoyo nasal ergonómico.',
       cardAccent: Color(0xFF2A9D8F),
       pieces: [
         CatalogPiece(
-          name: 'ALJOLENS AeroPilot Gold',
-          materialAndLens: 'Aleación Monel Dorada • Antirreflejo Esmeralda',
-          code: 'ATELIER #AV-501',
+          name: 'ALJOLENS AeroPilot 56',
+          materialAndLens: 'Aleación Monel Ligera • Antirreflejo Esmeralda',
+          code: 'SNELLEN #AV-01',
         ),
         CatalogPiece(
-          name: 'Navigator Carbon Edition',
-          materialAndLens: 'Fibra de Carbono • Progresivo FreeForm HD',
-          code: 'ATELIER #AV-588',
+          name: 'Navigator Studio RX',
+          materialAndLens: 'Titanio Cepillado • Lente Digital FreeForm',
+          code: 'SNELLEN #AV-02',
         ),
       ],
     ),
-    'Gafas deportivas': EyewearBentoProfile(
-      displayTitle: 'Gafas Deportivas',
-      editorialBadge: 'AERODINÁMICA & ALTO RENDIMIENTO',
+    'Browline': EyewearBentoProfile(
+      displayTitle: 'Montura Browline',
+      editorialBadge: 'MARCO SUPERIOR CLUBMASTER',
       opticalAnalysis:
-          'Diseño envolvente de curvatura base 8 que ofrece cobertura periférica total, agarre antideslizante y protección contra impactos.',
-      idealFaceShapes: [
-        'Ajuste Craneal Universal',
-        'Rostro Ovalado',
-        'Rostro Atlético',
-      ],
+          'Su ceja superior acentuada enmarca la mirada y atrae la atención hacia la línea frontal superior del rostro.',
+      idealFaceShapes: ['Rostro Triángulo', 'Rostro Ovalado', 'Rostro Redondo'],
       structuralSpec:
-          'Polímero con memoria Grilamid TR90 y terminales hidrofílicos de sujeción en 3 puntos.',
+          'Cejas en acetato de alto calibre fusionadas con aro inferior metálico fino.',
       cardAccent: Color(0xFF3D5A80),
       pieces: [
         CatalogPiece(
-          name: 'ALJOLENS Veloce Shield Pro',
-          materialAndLens: 'TR90 Ultraflex • Policarbonato Ventilado UV400',
-          code: 'ATELIER #SP-702',
+          name: 'ALJOLENS Clubmaster Heritage',
+          materialAndLens: 'Acetato Caret + Acero Dorado • Filtro Luz Azul',
+          code: 'SNELLEN #BR-11',
         ),
         CatalogPiece(
-          name: 'TrailRunner Impact RX',
-          materialAndLens: 'Polímero Balístico + Clip Óptico • Espejado Revo',
-          code: 'ATELIER #SP-745',
+          name: 'Intellectual Brow 52',
+          materialAndLens: 'Negro Mate + Titanio • Asférico 1.67 HD',
+          code: 'SNELLEN #BR-12',
         ),
       ],
     ),
-    'Gafas de sol': EyewearBentoProfile(
-      displayTitle: 'Gafas de Sol',
-      editorialBadge: 'PROTECCIÓN SOLAR UV400 & POLARIZADO',
+    'Cat eye': EyewearBentoProfile(
+      displayTitle: 'Montura Cat Eye',
+      editorialBadge: 'EFECTO LIFTING & ÁNGULO ASCENDENTE',
       opticalAnalysis:
-          'Lentes con filtro solar categoría 3 que bloquean el 100% de la radiación UVA/UVB y eliminan el deslumbramiento horizontal.',
-      idealFaceShapes: [
-        'Rostro Ovalado',
-        'Rostro Cuadrado',
-        'Rostro Redondo',
-        'Rostro Corazón',
-      ],
+          'Los extremos superiores elevados proyectan un efecto lifting visual que realza los pómulos y define el contorno facial.',
+      idealFaceShapes: ['Rostro Redondo', 'Rostro Diamante', 'Rostro Cuadrado'],
       structuralSpec:
-          'Montura de calibre amplio (54-58mm) en bio-acetato pulido con alma metálica reforzada.',
+          'Frente en acetato esculpido con vértices laterales ascendentes y bisagra flex.',
       cardAccent: Color(0xFFD9534F),
       pieces: [
         CatalogPiece(
-          name: 'ALJOLENS Riviera Polarized',
-          materialAndLens: 'Acetato Tortoise • Polarizado Categoría 3 UV400',
-          code: 'ATELIER #SN-901',
+          name: 'ALJOLENS Monroe Velvet',
+          materialAndLens: 'Bio-Acetato Burdeos • Antirreflejo Multicapa',
+          code: 'SNELLEN #CE-21',
         ),
         CatalogPiece(
-          name: 'Solaris Amber Gradient',
-          materialAndLens: 'Bio-Acetato + Herraje Dorado • Degradado Ámbar',
-          code: 'ATELIER #SN-934',
+          name: 'Feline Luxe 53',
+          materialAndLens: 'Acetato Havana • Fotocromático Transitions',
+          code: 'SNELLEN #CE-22',
+        ),
+      ],
+    ),
+    'Geométrico': EyewearBentoProfile(
+      displayTitle: 'Montura Geométrica',
+      editorialBadge: 'DISEÑO VANGUARDISTA & ANGULAR',
+      opticalAnalysis:
+          'Trazos poligonales y siluetas de autor que rompen la simetría tradicional y aportan una firma visual única.',
+      idealFaceShapes: ['Rostro Ovalado', 'Rostro Redondo', 'Facciones Suaves'],
+      structuralSpec:
+          'Aros facetados en metal fresado o acetato geométrico de corte CNC.',
+      cardAccent: Color(0xFFE86A33),
+      pieces: [
+        CatalogPiece(
+          name: 'ALJOLENS HexaGold 50',
+          materialAndLens: 'Acero Quirúrgico Dorado • Policarbonato BlueCut',
+          code: 'SNELLEN #GM-31',
+        ),
+        CatalogPiece(
+          name: 'Avant-Garde Heart/Poly',
+          materialAndLens: 'Acetato Translúcido • Lente Ultraligero 1.60',
+          code: 'SNELLEN #GM-32',
+        ),
+      ],
+    ),
+    'Ovalado': EyewearBentoProfile(
+      displayTitle: 'Montura Ovalada',
+      editorialBadge: 'PROPORCIÓN SUAVE & MINIMALISMO',
+      opticalAnalysis:
+          'Su elipse horizontal discreta acompaña las líneas naturales del rostro sin sobrecargar las facciones.',
+      idealFaceShapes: ['Rostro Cuadrado', 'Rostro Diamante', 'Rostro Alargado'],
+      structuralSpec:
+          'Perfil elíptico de bajo espesor con terminales anatómicos ajustables.',
+      cardAccent: Color(0xFF6D597A),
+      pieces: [
+        CatalogPiece(
+          name: 'ALJOLENS Ellipse Minimal',
+          materialAndLens: 'Titanio Ultraligero 9g • Antirreflejo Zafiro',
+          code: 'SNELLEN #OV-41',
+        ),
+        CatalogPiece(
+          name: 'Soft Oval Classic 49',
+          materialAndLens: 'Acetato Miel Translúcido • Monofocal Digital',
+          code: 'SNELLEN #OV-42',
+        ),
+      ],
+    ),
+    'Rectangular': EyewearBentoProfile(
+      displayTitle: 'Montura Rectangular',
+      editorialBadge: 'LÍNEA HORIZONTAL & EJECUTIVA',
+      opticalAnalysis:
+          'Su proporción más ancha que alta acorta visualmente los rostros alargados y brinda estructura a mejillas redondeadas.',
+      idealFaceShapes: ['Rostro Redondo', 'Rostro Ovalado', 'Rostro Alargado'],
+      structuralSpec:
+          'Armazón horizontal con varillas de ajuste firme y talón metálico.',
+      cardAccent: Color(0xFF457B9D),
+      pieces: [
+        CatalogPiece(
+          name: 'ALJOLENS Executive 55',
+          materialAndLens: 'Acetato Gris Grafito • Filtro Luz Azul + UV400',
+          code: 'SNELLEN #RC-51',
+        ),
+        CatalogPiece(
+          name: 'Linear Tech Frame',
+          materialAndLens: 'Fibra de Carbono + TR90 • Progresivo Digital',
+          code: 'SNELLEN #RC-52',
+        ),
+      ],
+    ),
+    'Circular': EyewearBentoProfile(
+      displayTitle: 'Montura Circular',
+      editorialBadge: 'GEOMETRÍA ORBITAL & RETRO',
+      opticalAnalysis:
+          'Círculos simétricos que suavizan mandíbulas pronunciadas, frentes anchas y mentones angulares.',
+      idealFaceShapes: ['Rostro Cuadrado', 'Rostro Rectangular', 'Rostro Diamante'],
+      structuralSpec:
+          'Aro redondo de radio constante con puente en arco de alta comodidad.',
+      cardAccent: Color(0xFFE76F51),
+      pieces: [
+        CatalogPiece(
+          name: 'ALJOLENS Orb-48 Panto',
+          materialAndLens: 'Titanio Japonés • Lente Asférico Antirreflejo',
+          code: 'SNELLEN #CR-61',
+        ),
+        CatalogPiece(
+          name: 'Atelier Round Tortoise',
+          materialAndLens: 'Acetato Mazzucchelli • BlueProtect HD',
+          code: 'SNELLEN #CR-62',
+        ),
+      ],
+    ),
+    'Cuadrado': EyewearBentoProfile(
+      displayTitle: 'Montura Cuadrada',
+      editorialBadge: 'PRESENCIA ARQUITECTÓNICA & WAYFARER',
+      opticalAnalysis:
+          'Su caja ocular amplia de ángulos rectos proporciona contraste sólido a rostros curvos o de facciones suaves.',
+      idealFaceShapes: ['Rostro Redondo', 'Rostro Ovalado', 'Triángulo Invertido'],
+      structuralSpec:
+          'Frente de acetato robusto con puente recto y bisagra reforzada de 5 puntos.',
+      cardAccent: Color(0xFFF1A661),
+      pieces: [
+        CatalogPiece(
+          name: 'ALJOLENS Block-54 Bold',
+          materialAndLens: 'Acetato Negro Intenso • Monofocal HD Antirreflejo',
+          code: 'SNELLEN #SQ-71',
+        ),
+        CatalogPiece(
+          name: 'Studio Square Matte',
+          materialAndLens: 'TR90 Alta Densidad • Fotocromático Gen 8',
+          code: 'SNELLEN #SQ-72',
         ),
       ],
     ),
@@ -354,7 +402,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
     }
   }
 
-  /// Detector auxiliar de textura uniforme o piel en primer plano (manos/fondos lisos)
   bool _isLikelyHandOrBlankSurface(img.Image resized224) {
     int skinTonePixels = 0;
     int lowContrastPixels = 0;
@@ -370,7 +417,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
         final int g = p.g.toInt();
         final int b = p.b.toInt();
 
-        // Regla cromática RGB para detección de epidermis en primer plano
         final bool isSkin = r > 95 &&
             g > 40 &&
             b > 20 &&
@@ -395,7 +441,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
     final double skinRatio = skinTonePixels / totalPixels;
     final double flatRatio = lowContrastPixels / totalPixels;
 
-    // Si más del 62% del recuadro es piel continua (una mano) o >85% es pared lisa sin bordes
     return skinRatio > 0.62 || flatRatio > 0.85;
   }
 
@@ -443,7 +488,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
 
       final bool isHandOrBlank = _isLikelyHandOrBlankSurface(resized);
 
-      // Tensor de entrada [1, 224, 224, 3] normalizado en [0.0, 1.0]
       final inputTensor = List.generate(
         1,
         (_) => List.generate(
@@ -462,7 +506,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
         ),
       );
 
-      // Determinar dinámicamente cuántas clases tiene el modelo TFLite cargado (5 o 6)
       final outputShape = _interpreter!.getOutputTensor(0).shape;
       final int numModelClasses = outputShape.last;
       final outputTensor = List.generate(
@@ -477,7 +520,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
 
       for (int i = 0; i < probs.length; i++) {
         final String labelName =
-            i < _labels.length ? _labels[i] : 'Clase #$i';
+            i < _labels.length ? _labels[i] : 'Estilo #$i';
         parsedResults.add(
           PredictionItem(label: labelName, confidence: probs[i]),
         );
@@ -485,7 +528,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
 
       parsedResults.sort((a, b) => b.confidence.compareTo(a.confidence));
 
-      // Evaluación del Filtro Dual de Rechazo (Open-Set Guard)
       final PredictionItem top1 = parsedResults.first;
       final PredictionItem top2 = parsedResults.length > 1
           ? parsedResults[1]
@@ -504,18 +546,18 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
         nextState = ScanUiState.rejectedFrame;
         reason =
             'El sensor detectó un fondo, mano u objeto distinto a una montura óptica.';
-      } else if (isHandOrBlank && top1.confidence < 0.82) {
+      } else if (isHandOrBlank && top1.confidence < 0.80) {
         nextState = ScanUiState.rejectedFrame;
         reason =
             'Se detectó una mano o superficie uniforme obstruyendo el encuadre. Apoya las gafas sobre una mesa despejada.';
       } else if (top1.confidence < _minConfidenceThreshold) {
         nextState = ScanUiState.rejectedFrame;
         reason =
-            'Nivel de confianza insuficiente (${(top1.confidence * 100).toStringAsFixed(1)}% < 60%). Acerca la montura de frente y evita cubrir el puente con los dedos.';
+            'Nivel de confianza insuficiente (${(top1.confidence * 100).toStringAsFixed(1)}%). Acerca la montura de frente sobre un fondo claro.';
       } else if (delta < _minDeltaMargin) {
         nextState = ScanUiState.rejectedFrame;
         reason =
-            'Ambigüedad morfológica entre ${top1.label} y ${top2.label} (margen Δ de ${(delta * 100).toStringAsFixed(1)}% < 15%). Mejora la iluminación frontal.';
+            'Similitud ajustada entre ${top1.label} y ${top2.label}. Toma la fotografía completamente de frente sin inclinar el marco.';
       }
 
       if (mounted) {
@@ -553,16 +595,16 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
 
   EyewearBentoProfile _resolveProfile(String label) {
     final clean = label.toLowerCase();
-    if (clean.contains('redonda')) {
-      return _atelierProfiles['Gafas redondas']!;
-    } else if (clean.contains('cuadrada')) {
-      return _atelierProfiles['Gafas cuadradas']!;
-    } else if (clean.contains('aviador')) {
-      return _atelierProfiles['Gafas aviador']!;
-    } else if (clean.contains('deportiva')) {
-      return _atelierProfiles['Gafas deportivas']!;
+    if (clean.contains('aviador')) return _snellenCatalog['Aviador']!;
+    if (clean.contains('browline')) return _snellenCatalog['Browline']!;
+    if (clean.contains('cat')) return _snellenCatalog['Cat eye']!;
+    if (clean.contains('geom')) return _snellenCatalog['Geométrico']!;
+    if (clean.contains('oval')) return _snellenCatalog['Ovalado']!;
+    if (clean.contains('rectang')) return _snellenCatalog['Rectangular']!;
+    if (clean.contains('circul') || clean.contains('redond')) {
+      return _snellenCatalog['Circular']!;
     }
-    return _atelierProfiles['Gafas de sol']!;
+    return _snellenCatalog['Cuadrado']!;
   }
 
   @override
@@ -592,9 +634,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
     );
   }
 
-  // ===========================================================================
-  // ENCABEZADO WARM EDITORIAL "ALJOLENS"
-  // ===========================================================================
   Widget _buildEditorialTopBar() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -636,7 +675,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Text(
-                _isModelReady ? 'AI STUDIO • OFFLINE' : 'CARGANDO MOTOR...',
+                _isModelReady ? '8 ESTILOS SNELLEN • AI' : 'CARGANDO AI...',
                 style: const TextStyle(
                   color: Color(0xFF264653),
                   fontSize: 10,
@@ -661,9 +700,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
     );
   }
 
-  // ===========================================================================
-  // VISOR DE CÁMARA CON BORDES SUAVES (BORDER RADIUS 32) Y GUÍA ÓPTICA
-  // ===========================================================================
   Widget _buildBentoCameraViewport() {
     return Container(
       decoration: BoxDecoration(
@@ -706,7 +742,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
               child: CircularProgressIndicator(color: Color(0xFFF1A661)),
             ),
 
-          // Retículo guía de encuadre durante el modo escaneo
           if (_capturedImagePath == null && _isCameraReady)
             Center(
               child: Container(
@@ -735,7 +770,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: const Text(
-                          'ENCUADRE ÓPTICO 224×224',
+                          'VISOR MORFOLÓGICO SNELLEN',
                           style: TextStyle(
                             color: Color(0xFFF1A661),
                             fontSize: 9,
@@ -753,7 +788,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
                     const Padding(
                       padding: EdgeInsets.only(bottom: 8.0),
                       child: Text(
-                        'Sin dedos sobre el puente nasal',
+                        'Centra el frente de la montura',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 11,
@@ -766,7 +801,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
               ),
             ),
 
-          // Botón flotante para volver a capturar cuando hay foto fija
           if (_capturedImagePath != null)
             Positioned(
               bottom: 12,
@@ -792,9 +826,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
     );
   }
 
-  // ===========================================================================
-  // SELECTOR DE LOS 3 ESTADOS DE INTERFAZ
-  // ===========================================================================
   Widget _buildDynamicStatePanel() {
     switch (_uiState) {
       case ScanUiState.initialScanning:
@@ -806,7 +837,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
     }
   }
 
-  // ESTADO A: ESCANEO INICIAL
   Widget _buildStateInitialScanning() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
@@ -828,17 +858,17 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
           Column(
             children: [
               const Text(
-                'DESCUBRIMIENTO DE MONTURA',
+                'DETECTOR DE 8 SILUETAS ÓPTICAS',
                 style: TextStyle(
                   color: Color(0xFF264653),
-                  fontSize: 18,
+                  fontSize: 17,
                   fontWeight: FontWeight.w900,
                   letterSpacing: 0.5,
                 ),
               ),
               const SizedBox(height: 6),
               Text(
-                'Coloca las gafas de frente sobre una superficie clara. Nuestro filtro descartará manos o tomas con menos del 60% de certeza.',
+                'Identifica Aviador, Browline, Cat eye, Geométrico, Ovalado, Rectangular, Circular y Cuadrado.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: const Color(0xFF264653).withOpacity(0.75),
@@ -875,7 +905,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
                         ),
                         SizedBox(width: 12),
                         Text(
-                          'Analizando Geometría...',
+                          'Analizando Silueta...',
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w800,
@@ -905,7 +935,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
     );
   }
 
-  // ESTADO B: DESCARTE / RECHAZO ILUSTRADO (MANOS, FONDOS O BAJA CERTEZA)
   Widget _buildStateRejectedFrame() {
     return Container(
       padding: const EdgeInsets.all(22),
@@ -918,8 +947,8 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Container(
-            width: 66,
-            height: 66,
+            width: 62,
+            height: 62,
             decoration: const BoxDecoration(
               color: Color(0xFF264653),
               shape: BoxShape.circle,
@@ -927,7 +956,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
             child: const Icon(
               Icons.back_hand_outlined,
               color: Color(0xFFF1A661),
-              size: 32,
+              size: 30,
             ),
           ),
           Column(
@@ -942,7 +971,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Text(
-                  'FILTRO OPEN-SET ACTIVADO',
+                  'ENCUADRE NO VÁLIDO',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 10,
@@ -953,11 +982,11 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
               ),
               const SizedBox(height: 8),
               const Text(
-                'No se detectaron gafas válidas',
+                'No se detectó una montura clara',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Color(0xFF264653),
-                  fontSize: 20,
+                  fontSize: 19,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -974,33 +1003,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
               ),
             ],
           ),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFFDF9),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Row(
-              children: [
-                Icon(
-                  Icons.lightbulb_outline_rounded,
-                  color: Color(0xFFE86A33),
-                  size: 20,
-                ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Tip ALJOLENS: Apoya las gafas sobre una mesa lisa y toma la foto desde arriba sin tapar el marco con la mano.',
-                    style: TextStyle(
-                      color: Color(0xFF264653),
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
           SizedBox(
             width: double.infinity,
             height: 50,
@@ -1015,7 +1017,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
               ),
               icon: const Icon(Icons.refresh_rounded, size: 18),
               label: const Text(
-                'Reintentar Captura',
+                'Intentar de Nuevo',
                 style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
               ),
             ),
@@ -1025,7 +1027,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
     );
   }
 
-  // ESTADO C: DESCUBRIMIENTO "ALJOLENS ATELIER" (CUADRÍCULA BENTO)
   Widget _buildStateDiscoveryAtelier() {
     final PredictionItem winner = _predictions.first;
     final EyewearBentoProfile profile = _resolveProfile(winner.label);
@@ -1033,7 +1034,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
     return ListView(
       physics: const BouncingScrollPhysics(),
       children: [
-        // TARJETA HERO BENTO DE RESULTADO
         Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
@@ -1053,25 +1053,29 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF264653).withOpacity(0.25),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Text(
-                      profile.editorialBadge,
-                      style: const TextStyle(
-                        color: Color(0xFFFFFDF9),
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.8,
+                  Flexible(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF264653).withOpacity(0.25),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Text(
+                        profile.editorialBadge,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFFFFFDF9),
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.7,
+                        ),
                       ),
                     ),
                   ),
+                  const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
@@ -1082,10 +1086,10 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      '${(winner.confidence * 100).toStringAsFixed(1)}% CERTEZA',
+                      '${(winner.confidence * 100).toStringAsFixed(1)}%',
                       style: const TextStyle(
                         color: Color(0xFFF1A661),
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
@@ -1097,7 +1101,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
                 profile.displayTitle.toUpperCase(),
                 style: const TextStyle(
                   color: Color(0xFFFFFDF9),
-                  fontSize: 25,
+                  fontSize: 24,
                   fontWeight: FontWeight.w900,
                   letterSpacing: 0.4,
                 ),
@@ -1117,7 +1121,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
         ),
         const SizedBox(height: 12),
 
-        // FILA BENTO DOBLE: ROSTROS IDEALES Y ESTRUCTURA DE MARCO
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1201,7 +1204,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
                         ),
                         SizedBox(width: 6),
                         Text(
-                          'INGENIERÍA',
+                          'ARQUITECTURA',
                           style: TextStyle(
                             color: Color(0xFFF1A661),
                             fontSize: 11,
@@ -1227,7 +1230,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
         ),
         const SizedBox(height: 12),
 
-        // TARJETA BENTO: CATÁLOGO DE AUTOR ALJOLENS ATELIER
         Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
@@ -1239,7 +1241,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'SUGERENCIAS DEL CATÁLOGO ALJOLENS ATELIER',
+                'SUGERENCIAS DEL CATÁLOGO ALJOLENS',
                 style: TextStyle(
                   color: Color(0xFF264653),
                   fontSize: 11.5,
@@ -1322,7 +1324,6 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
         ),
         const SizedBox(height: 12),
 
-        // DISTRIBUCIÓN DE CONFIANZA DE LAS CATEGORÍAS ÓPTICAS
         Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
@@ -1334,7 +1335,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'DISTRIBUCIÓN TENSORIAL DE PROBABILIDADES',
+                'PROBABILIDADES EN LAS 8 SILUETAS SNELLEN',
                 style: TextStyle(
                   color: Color(0xFF264653),
                   fontSize: 11,
