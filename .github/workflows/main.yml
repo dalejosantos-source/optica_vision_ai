@@ -24,19 +24,24 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: 4. Crear proyecto Android y ubicar tus 5 archivos
+      - name: 4. Verificar archivos y crear proyecto limpio
         run: |
-          mkdir -p /tmp/backup
-          cp pubspec.yaml main.dart AndroidManifest.xml modelo_gafas.tflite labels.txt /tmp/backup/
-          flutter create --org com.opticavision --project-name optica_vision_ai .
-          mkdir -p assets
-          cp /tmp/backup/pubspec.yaml ./pubspec.yaml
-          cp /tmp/backup/main.dart ./lib/main.dart
-          cp /tmp/backup/AndroidManifest.xml ./android/app/src/main/AndroidManifest.xml
-          cp /tmp/backup/modelo_gafas.tflite ./assets/modelo_gafas.tflite
-          cp /tmp/backup/labels.txt ./assets/labels.txt
+          echo "=== Archivos encontrados en tu repositorio ==="
+          ls -la
+          
+          # Crear el proyecto Flutter en una carpeta temporal limpia
+          flutter create --org com.opticavision --project-name optica_vision_ai /tmp/app_build
+          mkdir -p /tmp/app_build/assets
+          
+          # Copiar archivos corrigiendo automaticamente si Windows les puso .txt al final
+          cp pubspec.yaml* /tmp/app_build/pubspec.yaml
+          cp main.dart* /tmp/app_build/lib/main.dart
+          cp AndroidManifest.xml* /tmp/app_build/android/app/src/main/AndroidManifest.xml
+          cp modelo_gafas.tflite* /tmp/app_build/assets/modelo_gafas.tflite
+          cp labels.txt* /tmp/app_build/assets/labels.txt
 
       - name: 5. Descargar librerias y construir APK
+        working-directory: /tmp/app_build
         run: |
           flutter pub get
           flutter build apk --split-per-abi
@@ -45,4 +50,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Instalador-Optica-Vision-AI
-          path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          path: /tmp/app_build/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
