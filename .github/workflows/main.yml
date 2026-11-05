@@ -18,13 +18,13 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: 3. Instalar Flutter en la nube
+      - name: 3. Instalar Flutter 3.27 (Soporte nativo Android SDK 35)
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
+          flutter-version: '3.27.1'
           channel: 'stable'
 
-      - name: 4. Crear proyecto y configurar Kotlin compatible
+      - name: 4. Crear proyecto y configurar SDK 35
         run: |
           flutter create --org com.opticavision --project-name optica_vision_ai /tmp/app_build
           mkdir -p /tmp/app_build/assets
@@ -35,11 +35,9 @@ jobs:
           cp "modelo_gafas"* /tmp/app_build/assets/modelo_gafas.tflite
           cp "labels"* /tmp/app_build/assets/labels.txt
 
-          # Parche para actualizar Kotlin en android/settings.gradle
-          cd /tmp/app_build/android
-          echo "Actualizando version de Kotlin en settings.gradle..."
-          sed -i 's/version "1.8.22" apply false/version "1.9.22" apply false/g' settings.gradle
-          sed -i 's/version "1.7.10" apply false/version "1.9.22" apply false/g' settings.gradle
+          # Forzar compileSdk 35 en build.gradle (Groovy o Kotlin DSL)
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 35/g' /tmp/app_build/android/app/build.gradle* || true
+          sed -i 's/compileSdk flutter.compileSdkVersion/compileSdk 35/g' /tmp/app_build/android/app/build.gradle* || true
 
       - name: 5. Descargar librerias y construir APK
         working-directory: /tmp/app_build
