@@ -24,7 +24,7 @@ jobs:
           flutter-version: '3.27.1'
           channel: 'stable'
 
-      - name: 4. Crear proyecto y configurar SDK 35
+      - name: 4. Crear proyecto y configurar SDK 35 + Reglas TFLite
         run: |
           flutter create --org com.opticavision --project-name optica_vision_ai /tmp/app_build
           mkdir -p /tmp/app_build/assets
@@ -35,15 +35,22 @@ jobs:
           cp "modelo_gafas"* /tmp/app_build/assets/modelo_gafas.tflite
           cp "labels"* /tmp/app_build/assets/labels.txt
 
-          # Forzar compileSdk 35 en build.gradle (Groovy o Kotlin DSL)
+          # Forzar compileSdk 35 en build.gradle
           sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 35/g' /tmp/app_build/android/app/build.gradle* || true
           sed -i 's/compileSdk flutter.compileSdkVersion/compileSdk 35/g' /tmp/app_build/android/app/build.gradle* || true
 
-      - name: 5. Descargar librerias y construir APK
+          # Crear reglas ProGuard/R8 por seguridad para TensorFlow Lite
+          cat << 'EOF' > /tmp/app_build/android/app/proguard-rules.pro
+          -keep class org.tensorflow.lite.** { *; }
+          -dontwarn org.tensorflow.lite.**
+          -dontwarn org.tensorflow.lite.gpu.**
+          EOF
+
+      - name: 5. Descargar librerias y construir APK (Sin bloqueo R8)
         working-directory: /tmp/app_build
         run: |
           flutter pub get
-          flutter build apk --split-per-abi
+          flutter build apk --release --split-per-abi --no-shrink
 
       - name: 6. Publicar APK para descarga
         uses: actions/upload-artifact@v4
