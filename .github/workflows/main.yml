@@ -29,11 +29,21 @@ jobs:
           flutter create --org com.opticavision --project-name optica_vision_ai /tmp/app_build
           mkdir -p /tmp/app_build/assets
           
-          cp "pubspec.yaml"* /tmp/app_build/pubspec.yaml
-          cp "main.dart"* /tmp/app_build/lib/main.dart
-          cp "AndroidManifest.xml"* /tmp/app_build/android/app/src/main/AndroidManifest.xml
-          cp "modelo_gafas"* /tmp/app_build/assets/modelo_gafas.tflite
-          cp "labels"* /tmp/app_build/assets/labels.txt
+          cp "pubspec.yaml" /tmp/app_build/pubspec.yaml
+          cp "main.dart" /tmp/app_build/lib/main.dart
+          cp "AndroidManifest.xml" /tmp/app_build/android/app/src/main/AndroidManifest.xml
+          if [ -f "modelo_gafas.tflite" ]; then
+            cp "modelo_gafas.tflite" /tmp/app_build/assets/modelo_gafas.tflite
+          else
+            MODEL_FILE=$(ls -1 modelo_gafas* 2>/dev/null | head -n 1)
+            cp "$MODEL_FILE" /tmp/app_build/assets/modelo_gafas.tflite
+          fi
+          if [ -f "labels.txt" ]; then
+            cp "labels.txt" /tmp/app_build/assets/labels.txt
+          else
+            LABEL_FILE=$(ls -1 labels* 2>/dev/null | head -n 1)
+            cp "$LABEL_FILE" /tmp/app_build/assets/labels.txt
+          fi
 
           # Forzar compileSdk 35 en build.gradle
           sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 35/g' /tmp/app_build/android/app/build.gradle* || true
