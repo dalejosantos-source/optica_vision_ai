@@ -104,8 +104,18 @@ class AljolensStudioScreen extends StatefulWidget {
 
 class _AljolensStudioScreenState extends State<AljolensStudioScreen>
     with WidgetsBindingObserver {
-  static const double _minConfidenceThreshold = 0.52;
-  static const double _minDeltaMargin = 0.12;
+  // Umbrales de decisión en dos etapas. Actualízalos con los valores que imprime
+  // el script de Colab (sección "UMBRALES CALIBRADOS PARA main.dart").
+  // Etapa 1: P(gafas) = 1 - P(Sin gafas / Fondo). Si es menor, se rechaza.
+  static const double _minGlassesProbability = 0.80;
+  // Etapa 2: confianza de la forma, renormalizada dentro de las 8 siluetas.
+  static const double _minShapeConfidence = 0.45;
+  static const double _minDeltaMargin = 0.10;
+  // Si delta < _minDeltaMargin pero top1 + top2 >= _dualMinCombined, se acepta
+  // mostrando la silueta secundaria (ej. Rectangular · Cuadrado).
+  static const double _dualMinCombined = 0.80;
+  // Recorte central ajustado al recuadro del visor para eliminar fondo sobrante.
+  static const double _cropFactor = 0.72;
 
   CameraController? _cameraController;
   Interpreter? _interpreter;
@@ -128,6 +138,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
   bool _isProcessing = false;
   String? _capturedImagePath;
   String _rejectionReason = '';
+  String? _secondaryShapeLabel;
   ScanUiState _uiState = ScanUiState.initialScanning;
   List<PredictionItem> _predictions = [];
 
@@ -444,6 +455,45 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
     return skinRatio > 0.62 || flatRatio > 0.85;
   }
 
+  bool _isNegativeLabel(String label) {
+    final clean = label.toLowerCase();
+    return clean.contains('sin_gafas') ||
+        clean.contains('sin gafas') ||
+        clean.contains('fondo');
+  }
+
+  /// Ejecuta el modelo sobre una imagen 224x224 y devuelve las probabilidades.
+  /// El modelo espera RGB float en [0, 1] (tensor `input_0_to_1`).
+  List<double> _runInference(img.Image resized224) {
+    final inputTensor = List.generate(
+      1,
+      (_) => List.generate(
+        224,
+        (y) => List.generate(
+          224,
+          (x) {
+            final pixel = resized224.getPixel(x, y);
+            return <double>[
+              pixel.r / 255.0,
+              pixel.g / 255.0,
+              pixel.b / 255.0,
+            ];
+          },
+        ),
+      ),
+    );
+
+    final outputShape = _interpreter!.getOutputTensor(0).shape;
+    final int numModelClasses = outputShape.last;
+    final outputTensor = List.generate(
+      1,
+      (_) => List<double>.filled(numModelClasses, 0.0),
+    );
+
+    _interpreter!.run(inputTensor, outputTensor);
+    return List<double>.from(outputTensor[0]);
+  }
+
   Future<void> _scanAndEvaluateFrame() async {
     if (_cameraController == null ||
         !_cameraController!.value.isInitialized ||
@@ -465,9 +515,10 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
       }
 
       final img.Image oriented = img.bakeOrientation(decoded);
-      final int side = oriented.width < oriented.height
+      final int minDim = oriented.width < oriented.height
           ? oriented.width
           : oriented.height;
+      final int side = (minDim * _cropFactor).round();
       final int offsetX = (oriented.width - side) ~/ 2;
       final int offsetY = (oriented.height - side) ~/ 2;
 
@@ -488,87 +539,93 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
 
       final bool isHandOrBlank = _isLikelyHandOrBlankSurface(resized);
 
-      final inputTensor = List.generate(
-        1,
-        (_) => List.generate(
-          224,
-          (y) => List.generate(
-            224,
-            (x) {
-              final pixel = resized.getPixel(x, y);
-              return <double>[
-                pixel.r / 255.0,
-                pixel.g / 255.0,
-                pixel.b / 255.0,
-              ];
-            },
-          ),
-        ),
+      // --- Inferencia con TTA: imagen original + espejo horizontal ---------
+      // Una montura real produce predicciones estables entre ambas vistas;
+      // un objeto ajeno (pantalla, pared, teclado) suele dar salidas
+      // inestables, y el promedio diluye esos aciertos casuales.
+      final List<double> probsOriginal = _runInference(resized);
+      final List<double> probsMirror =
+          _runInference(img.flipHorizontal(img.Image.from(resized)));
+      final List<double> probs = List<double>.generate(
+        probsOriginal.length,
+        (i) => (probsOriginal[i] + probsMirror[i]) / 2.0,
       );
 
-      final outputShape = _interpreter!.getOutputTensor(0).shape;
-      final int numModelClasses = outputShape.last;
-      final outputTensor = List.generate(
-        1,
-        (_) => List<double>.filled(numModelClasses, 0.0),
-      );
+      // --- Etapa 1: ¿hay gafas? ------------------------------------------
+      // Se usa la probabilidad completa de la clase negativa, no solo si
+      // es top-1: "Sin gafas" al 40 % ya es una señal fuerte de rechazo.
+      int negativeIndex = -1;
+      for (int i = 0; i < probs.length && i < _labels.length; i++) {
+        if (_isNegativeLabel(_labels[i])) {
+          negativeIndex = i;
+          break;
+        }
+      }
+      final double pNoGlasses = negativeIndex >= 0 ? probs[negativeIndex] : 0.0;
+      final double pGlasses = (1.0 - pNoGlasses).clamp(0.0, 1.0);
 
-      _interpreter!.run(inputTensor, outputTensor);
-
-      final List<double> probs = List<double>.from(outputTensor[0]);
-      final List<PredictionItem> parsedResults = [];
-
+      // --- Etapa 2: ¿qué forma? (renormalizada dentro de las 8 siluetas) --
+      final List<PredictionItem> shapeResults = [];
       for (int i = 0; i < probs.length; i++) {
+        if (i == negativeIndex) continue;
         final String labelName =
             i < _labels.length ? _labels[i] : 'Estilo #$i';
-        parsedResults.add(
-          PredictionItem(label: labelName, confidence: probs[i]),
+        final double shapeConfidence =
+            pGlasses > 1e-6 ? (probs[i] / pGlasses).clamp(0.0, 1.0) : 0.0;
+        shapeResults.add(
+          PredictionItem(label: labelName, confidence: shapeConfidence),
         );
       }
+      shapeResults.sort((a, b) => b.confidence.compareTo(a.confidence));
 
-      parsedResults.sort((a, b) => b.confidence.compareTo(a.confidence));
-
-      final PredictionItem top1 = parsedResults.first;
-      final PredictionItem top2 = parsedResults.length > 1
-          ? parsedResults[1]
+      final PredictionItem top1 = shapeResults.isNotEmpty
+          ? shapeResults.first
           : const PredictionItem(label: '', confidence: 0.0);
-
+      final PredictionItem top2 = shapeResults.length > 1
+          ? shapeResults[1]
+          : const PredictionItem(label: '', confidence: 0.0);
       final double delta = top1.confidence - top2.confidence;
-      final bool isNegativeClass =
-          top1.label.toLowerCase().contains('sin_gafas') ||
-              top1.label.toLowerCase().contains('sin gafas') ||
-              top1.label.toLowerCase().contains('fondo');
+
+      debugPrint(
+        'ALJOLENS -> P(gafas)=${pGlasses.toStringAsFixed(3)} '
+        'top1=${top1.label}:${top1.confidence.toStringAsFixed(3)} '
+        'top2=${top2.label}:${top2.confidence.toStringAsFixed(3)} '
+        'manoOFondo=$isHandOrBlank',
+      );
 
       ScanUiState nextState = ScanUiState.discoverySuccess;
       String reason = '';
+      String? secondaryLabel;
 
-      if (isNegativeClass) {
+      if (pGlasses < _minGlassesProbability) {
         nextState = ScanUiState.rejectedFrame;
         reason =
-            'El sensor detectó un fondo, mano u objeto distinto a una montura óptica.';
-      } else if (isHandOrBlank && top1.confidence < 0.80) {
+            'El analizador no reconoce una montura en la imagen (probabilidad de gafas ${(pGlasses * 100).toStringAsFixed(1)}%). Apunta a unas gafas reales, de frente y centradas.';
+      } else if (isHandOrBlank && pGlasses < 0.95) {
         nextState = ScanUiState.rejectedFrame;
         reason =
             'Se detectó una mano o superficie uniforme obstruyendo el encuadre. Apoya las gafas sobre una mesa despejada.';
-      } else if (top1.confidence < _minConfidenceThreshold) {
+      } else if (top1.confidence < _minShapeConfidence) {
         nextState = ScanUiState.rejectedFrame;
         reason =
-            'Nivel de confianza insuficiente (${(top1.confidence * 100).toStringAsFixed(1)}%). Acerca la montura de frente sobre un fondo claro.';
+            'Nivel de confianza insuficiente en la silueta (${(top1.confidence * 100).toStringAsFixed(1)}%). Acerca la montura de frente sobre un fondo claro.';
       } else if (delta < _minDeltaMargin) {
-        nextState = ScanUiState.rejectedFrame;
-        reason =
-            'Similitud ajustada entre ${top1.label} y ${top2.label}. Toma la fotografía completamente de frente sin inclinar el marco.';
+        if ((top1.confidence + top2.confidence) >= _dualMinCombined &&
+            top2.label.isNotEmpty) {
+          secondaryLabel = top2.label;
+        } else {
+          nextState = ScanUiState.rejectedFrame;
+          reason =
+              'Similitud ajustada entre ${top1.label} y ${top2.label}. Toma la fotografía completamente de frente sin inclinar el marco.';
+        }
       }
 
       if (mounted) {
         setState(() {
           _capturedImagePath = picture.path;
-          _predictions = parsedResults
-              .where((p) =>
-                  !p.label.toLowerCase().contains('sin_gafas') &&
-                  !p.label.toLowerCase().contains('sin gafas'))
-              .toList();
+          _predictions = shapeResults;
           _rejectionReason = reason;
+          _secondaryShapeLabel = secondaryLabel;
           _uiState = nextState;
           _isProcessing = false;
         });
@@ -589,6 +646,7 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
       _capturedImagePath = null;
       _predictions = [];
       _rejectionReason = '';
+      _secondaryShapeLabel = null;
       _uiState = ScanUiState.initialScanning;
     });
   }
@@ -1106,6 +1164,28 @@ class _AljolensStudioScreenState extends State<AljolensStudioScreen>
                   letterSpacing: 0.4,
                 ),
               ),
+              if (_secondaryShapeLabel != null) ...[
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF264653).withOpacity(0.32),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'SILUETA HÍBRIDA • AFINIDAD CON ${_secondaryShapeLabel!.toUpperCase()}',
+                    style: const TextStyle(
+                      color: Color(0xFFF1A661),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 6),
               Text(
                 profile.opticalAnalysis,
