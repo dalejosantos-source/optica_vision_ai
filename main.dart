@@ -425,10 +425,10 @@ class AljolensRootController extends StatefulWidget {
 class _AljolensRootControllerState extends State<AljolensRootController>
     with WidgetsBindingObserver {
   // Umbrales Open-Set calibrados (Probabilidad de gafa + Softmax + Entropía de Shannon)
-  static const double _minGlassesProbability = 0.80;
-  static const double _minShapeConfidence = 0.45;
-  static const double _minDeltaMargin = 0.10;
-  static const double _maxNormalizedEntropy = 0.72;
+  static const double _minGlassesProbability = 0.76;
+  static const double _minShapeConfidence = 0.40;
+  static const double _minDeltaMargin = 0.09;
+  static const double _maxNormalizedEntropy = 0.82;
   static const double _dualMinCombined = 0.80;
   static const double _cropFactor = 0.72;
 
