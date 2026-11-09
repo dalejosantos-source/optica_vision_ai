@@ -1,0 +1,16 @@
+{
+  "version": "v5",
+  "backbone": "efficientnetv2b1",
+  "minGlassesProbability": 0.76,
+  "minShapeConfidence": 0.4,
+  "minDeltaMargin": 0.09,
+  "maxNormalizedEntropy": 0.82,
+  "dualMinCombined": 0.8,
+  "test_FAR": 0.00788436268068331,
+  "test_FRR": 0.6292134831460674,
+  "test_forma": {
+    "top1": 0.6645264847512039,
+    "top2": 0.7688603531300161
+  },
+  "test_real": {}
+}
